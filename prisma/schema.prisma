@@ -1,0 +1,404 @@
+// LIFEBridge Business Intelligence — Prisma Schema
+// Extends / integrates with core MOS. Do not duplicate companies, users, customers, products.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Core multi-tenancy (minimal for standalone; link to MOS later) ───
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sources           SourceRegistry[]
+  leads             IntelligenceLead[]
+  researchRuns      WebResearchRun[]
+  approvals         ApprovalRequest[]
+  watchlists        Watchlist[]
+  marketSignals     MarketSignal[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  companyId String?
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  researchRuns WebResearchRun[]
+  approvalsRequested ApprovalRequest[] @relation("RequestedBy")
+  approvalsApproved  ApprovalRequest[] @relation("ApprovedBy")
+}
+
+// ─── Source Registry ───
+enum SourceType {
+  GOVERNMENT
+  HOSPITAL
+  CLINIC
+  DIAGNOSTIC
+  VETERINARY
+  MEDICAL_COLLEGE
+  PROCUREMENT_PORTAL
+  TENDER_PORTAL
+  SEARCH
+  PUBLIC_DIRECTORY
+  OTHER
+}
+
+enum SourceStatus {
+  HEALTHY
+  DEGRADED
+  FAILED
+  NOT_SUPPORTED
+  DISABLED
+}
+
+model SourceRegistry {
+  id                    String       @id @default(cuid())
+  companyId             String?
+  name                  String
+  website               String?
+  sourceType            SourceType
+  description           String?      @db.Text
+  country               String       @default("IN")
+  state                 String?
+  category              String?
+  enabled               Boolean      @default(true)
+  crawlAllowed          Boolean      @default(false)
+  apiAvailable          Boolean      @default(false)
+  requiresAuthentication Boolean     @default(false)
+  lastCheckedAt         DateTime?
+  lastSuccessfulRunAt   DateTime?
+  status                SourceStatus @default(DISABLED)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  company  Company?        @relation(fields: [companyId], references: [id])
+  evidence LeadEvidence[]
+
+  @@index([companyId])
+  @@index([status])
+  @@index([sourceType])
+}
+
+// ─── Intelligence Lead / Opportunity ───
+enum LeadStatus {
+  DISCOVERED
+  UNVERIFIED
+  REVIEW
+  VERIFIED
+  QUALIFIED
+  CONTACTED
+  RFQ
+  QUOTATION
+  NEGOTIATION
+  WON
+  LOST
+  NURTURE
+  IGNORED
+}
+
+enum OpportunityCategory {
+  MEDICAL_EQUIPMENT
+  HOSPITAL_EQUIPMENT
+  VETERINARY_EQUIPMENT
+  DIAGNOSTIC
+  LABORATORY
+  ICU
+  OT
+  CSSD
+  HOSPITAL_FURNITURE
+  PPE
+  CONSUMABLES
+  SANITATION
+  BIOMEDICAL
+  SERVICE
+  AMC
+  INFRASTRUCTURE
+  PROJECT
+  PROCUREMENT
+  OTHER
+}
+
+enum Relevance {
+  RELEVANT
+  POSSIBLY_RELEVANT
+  NOT_RELEVANT
+}
+
+enum OrgType {
+  HOSPITAL
+  CLINIC
+  DIAGNOSTIC_CENTRE
+  VETERINARY_HOSPITAL
+  MEDICAL_COLLEGE
+  UNIVERSITY
+  GOVERNMENT
+  PRIVATE
+  CORPORATE
+  NGO
+  PROCUREMENT_AUTHORITY
+  OTHER
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PARTIALLY_VERIFIED
+  VERIFIED
+  HIGH_CONFIDENCE
+}
+
+enum PriorityBand {
+  HOT
+  QUALIFIED
+  NURTURE
+  LOW
+}
+
+model IntelligenceLead {
+  id                  String              @id @default(cuid())
+  companyId           String
+  organizationName    String
+  legalName           String?
+  website             String?
+  organizationType    OrgType?
+  department          String?
+  address             String?             @db.Text
+  city                String?
+  state               String?
+  pincode             String?
+  phone               String?
+  businessEmail       String?
+  contactDesignation  String?
+  requirementCategory OpportunityCategory?
+  products            String?             @db.Text
+  quantity            String?
+  estimatedValue      Decimal?            @db.Decimal(18, 2)
+  currency            String              @default("INR")
+  deadline            DateTime?
+  tenderNumber        String?
+  rfqNumber           String?
+  rfpNumber           String?
+  publicationDate     DateTime?
+  sourceUrl           String?             @db.Text
+  confidence          Float               @default(0)
+  opportunityScore    Int                 @default(0)
+  priorityBand        PriorityBand        @default(LOW)
+  status              LeadStatus          @default(DISCOVERED)
+  verificationStatus  VerificationStatus  @default(UNVERIFIED)
+  relevance           Relevance           @default(POSSIBLY_RELEVANT)
+  contentHash         String?
+  documentHash        String?
+  assignedUserId      String?
+  recommendedAction   String?
+  notes               String?             @db.Text
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  company   Company         @relation(fields: [companyId], references: [id])
+  evidence  LeadEvidence[]
+  scores    LeadScore[]
+  signals   MarketSignal[]
+
+  @@index([companyId])
+  @@index([status])
+  @@index([opportunityScore])
+  @@index([deadline])
+  @@index([tenderNumber])
+  @@index([contentHash])
+  @@index([city, state])
+}
+
+// ─── Evidence (mandatory source transparency) ───
+enum EvidenceType {
+  OFFICIAL_WEBSITE
+  TENDER
+  RFQ
+  RFP
+  EOI
+  PROCUREMENT_NOTICE
+  NEWS
+  PROJECT
+  PUBLIC_DIRECTORY
+  SEARCH_RESULT
+  OTHER
+}
+
+model LeadEvidence {
+  id          String       @id @default(cuid())
+  leadId      String
+  sourceId    String?
+  sourceUrl   String       @db.Text
+  title       String?
+  snippet     String?      @db.Text
+  description String?      @db.Text
+  evidenceType EvidenceType @default(OTHER)
+  publishedAt DateTime?
+  retrievedAt DateTime     @default(now())
+  contentHash String?
+  confidence  Float        @default(0)
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  lead   IntelligenceLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  source SourceRegistry?  @relation(fields: [sourceId], references: [id])
+
+  @@index([leadId])
+  @@index([sourceId])
+  @@index([contentHash])
+}
+
+// ─── Explainable Score ───
+model LeadScore {
+  id                      String   @id @default(cuid())
+  leadId                  String
+  totalScore              Int
+  sourceCredibility       Int      @default(0)
+  healthcareRelevance     Int      @default(0)
+  businessFit             Int      @default(0)
+  opportunityValue        Int      @default(0)
+  deadlineUrgency         Int      @default(0)
+  organizationConfidence  Int      @default(0)
+  contactAvailability     Int      @default(0)
+  dataCompleteness        Int      @default(0)
+  crossSourceConfirmation Int      @default(0)
+  explanation             Json?
+  createdAt               DateTime @default(now())
+
+  lead IntelligenceLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+// ─── Research History ───
+enum ResearchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model WebResearchRun {
+  id          String         @id @default(cuid())
+  companyId   String
+  userId      String?
+  query       String         @db.Text
+  parameters  Json?
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+  status      ResearchStatus @default(PENDING)
+  resultCount Int            @default(0)
+  error       String?        @db.Text
+  createdAt   DateTime       @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([status])
+}
+
+// ─── Approvals (NO auto-send) ───
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  SENT
+  FAILED
+}
+
+enum ApprovalChannel {
+  EMAIL
+  WHATSAPP
+  OTHER
+}
+
+model ApprovalRequest {
+  id             String          @id @default(cuid())
+  companyId      String
+  requestedById  String
+  approverId     String?
+  entityType     String
+  entityId       String
+  channel        ApprovalChannel
+  recipient      String?
+  draftContent   String          @db.Text
+  status         ApprovalStatus  @default(PENDING)
+  approvedById   String?
+  approvedAt     DateTime?
+  rejectedById   String?
+  rejectedAt     DateTime?
+  rejectionReason String?        @db.Text
+  sentAt         DateTime?
+  error          String?         @db.Text
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id])
+  requestedBy User    @relation("RequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?   @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([companyId])
+  @@index([status])
+  @@index([entityType, entityId])
+}
+
+// ─── Watchlist ───
+model Watchlist {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  keywords  String?  @db.Text
+  locations String?  @db.Text
+  categories String? @db.Text
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+}
+
+// ─── Market Signals ───
+enum SignalType {
+  NEW_HOSPITAL
+  HOSPITAL_EXPANSION
+  NEW_BRANCH
+  NEW_DIAGNOSTIC_CENTRE
+  NEW_VETERINARY_FACILITY
+  PROCUREMENT
+  EQUIPMENT_REPLACEMENT
+  PROJECT
+  OTHER
+}
+
+model MarketSignal {
+  id          String     @id @default(cuid())
+  companyId   String
+  leadId      String?
+  signalType  SignalType
+  title       String
+  description String?    @db.Text
+  location    String?
+  sourceUrl   String?    @db.Text
+  confidence  Float      @default(0)
+  createdAt   DateTime   @default(now())
+
+  company Company          @relation(fields: [companyId], references: [id])
+  lead    IntelligenceLead? @relation(fields: [leadId], references: [id])
+
+  @@index([companyId])
+  @@index([signalType])
+}
